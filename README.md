@@ -56,7 +56,7 @@ optional arguments:
 
 ## Shortcommings
 - Does not create the `_object_settings.json` and `_camera_settings.json`
-- occlusion is handled as follows: `kitti_occlusion_to_fat_occlusion = {0: 0.0, 1: 0.25, 2: 0.75, 3: 0.0}`
+- Ccclusion is handled as follows: `kitti_occlusion_to_fat_occlusion = {0: 0.0, 1: 0.25, 2: 0.75, 3: 0.0}`.
 - Since KITTI does not provide a `visibility` value, the following code reproduces the `visibility`:
 
 ```python
