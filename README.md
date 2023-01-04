@@ -1,7 +1,7 @@
 # KITTI 3D to FAT Converter
 
-Converts [KITTI 3D Object Detection Evaluation 2017 Training Dataset](https://www.cvlibs.net/datasets/kitti/eval_object.php?obj_benchmark=3d)  
-to [Falling Things Format](https://research.nvidia.com/sites/default/files/pubs/2018-06_Falling-Things/readme_0.txt)
+Converts [KITTI 3D Object Detection Evaluation 2017](https://www.cvlibs.net/datasets/kitti/eval_object.php?obj_benchmark=3d) Object Pose Estimation training dataset  
+to [Falling Things Format](https://research.nvidia.com/sites/default/files/pubs/2018-06_Falling-Things/readme_0.txt).
 
 ![Debug output](doc/000232.png)
 
