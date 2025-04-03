@@ -44,16 +44,24 @@ class KITTI3DToFATConverter:
             ground_truth_KITTI = self._parse_ground_truth_file(frame_id)
             self.objects = self._convert_objects(ground_truth_KITTI,
                                                  self.camera_calibration)
+
+            # filter for cars only
             self.objects = [obj for obj in self.objects if
-                            obj['class'] != 'dontcare']
+                            obj['class'] == 'car']
 
             # store dataset
-            self._dump_annotation_file(self.objects, os.path.join(args.output_dir, frame_id + '.json'))
+            if len(self.objects) == 0:
+                continue
             shutil.copy(image_filename, args.output_dir)
+            camera_info = self._convert_to_camera_info(self.camera_calibration)
+            centerpose_camera_data = self._convert_to_centerpose_camera_data(camera_info)
+            self._dump_annotation_file(self.objects, centerpose_camera_data, os.path.join(args.output_dir, frame_id + '.json'))
 
             if args.save_camera_info:
-                self._dump_camera_info_file(self.camera_calibration,
-                                            os.path.join(args.output_dir, frame_id + '.yml'))
+                with open(os.path.join(args.output_dir, frame_id + '.yml'), "w") as write_file:
+                    yaml.dump(camera_info, write_file, default_flow_style=None,
+                              sort_keys=False)
+
             if args.debug:
                 self._draw_cuboid_points(
                     image_path=os.path.join(args.output_dir, frame_id + '.png'))
@@ -81,14 +89,13 @@ class KITTI3DToFATConverter:
             files.extend(glob(annotation + "/*" + ending))
         return files
 
-    def _dump_camera_info_file(self, camera_calibration: dict,
-                               yaml_file: str) -> None:
+    def _convert_to_camera_info(self, camera_calibration: dict) -> dict:
         """
-        Stores given camera_calibration information in camera_info.yaml format.
+        Converts given camera_calibration information to camera_info.yaml (ROS CameraInfo) format.
+
         Parameters
         ----------
         camera_calibration : Camera calibration information in KITTI format.
-        yaml_file : Path to store camera calibration file in yaml format.
         """
 
         rectification_matrix = camera_calibration['R0_rect'].tolist()
@@ -125,22 +132,23 @@ class KITTI3DToFATConverter:
                 "data": projection_matrix
             },
         }
-        with open(yaml_file, "w") as write_file:
-            yaml.dump(camera_info, write_file, default_flow_style=None,
-                      sort_keys=False)
+        return camera_info
 
-    def _dump_annotation_file(self, objects: list, filename: str) -> None:
+    def _dump_annotation_file(self, objects: list, camera_data: dict, filename: str) -> None:
         """
         Stores objects ground truth information in FAT format as json file.
         Parameters
         ----------
         objects : List containing object information in FAT format.
+        camera_data: Dict containing camera information in centerpose format.
         filename : Path to store json file.
         """
 
-        output = {'camera_data': {'location_worldframe': [0, 0, 0],
-                                  'quaternion_xyzw_worldframe': [0, 0, 0, 1],
-                                  },
+        output = {    "AR_data": {
+            "plane_center": [ 0, 0, 0 ],
+            "plane_normal": [ 0, 0, 0]
+        },
+            'camera_data': camera_data,
                   'objects': objects}
 
         with open(filename, "w") as write_file:
@@ -320,13 +328,13 @@ class KITTI3DToFATConverter:
         List of object dictionaries containing object information in FAT format.
         """
 
-        rectification_matrix = np.zeros((4, 4))
-        rectification_matrix[:3, :3] = sensor_calibration['R0_rect'].reshape(3,
-                                                                             3)
-        rectification_matrix[3, 3] = 1
+        #rectification_matrix = np.zeros((4, 4))
+        #rectification_matrix[:3, :3] = sensor_calibration['R0_rect'].reshape(3,
+        #                                                                     3)
+        #rectification_matrix[3, 3] = 1
         projection_matrix = sensor_calibration['P2'].reshape(3, 4)
 
-        kitti_occlusion_to_fat_occlusion = {0: 0.0, 1: 0.25, 2: 0.75, 3: 0.0}
+        kitti_occlusion_to_fat_occlusion = {0: 0.0, 1: 0.25, 2: 0.75, 3: 1.0}
         objects = []
 
         for class_id in ground_truth.keys():
@@ -342,26 +350,25 @@ class KITTI3DToFATConverter:
                 color = 'white'
 
             for i in range(ground_truth[class_id].shape[0]):
-                object_dict = {"class": class_id.lower()}
+                object_dict = {"class": class_id.lower(), "name": class_id.lower(), "provenance": "objectron",}
                 occlusion = max(0, int(ground_truth[class_id][i][1]))
-                occlusion = kitti_occlusion_to_fat_occlusion.get(occlusion)
+                occlusion = kitti_occlusion_to_fat_occlusion.get(occlusion,0)
                 truncation = float(ground_truth[class_id][i][0])
                 visibility = 1.0 - truncation
                 visibility = max(0, visibility - occlusion)
 
                 # 2D Bounding Box
                 left = ground_truth[class_id][i][3]
-                bottom = ground_truth[class_id][i][4]
-                width = ground_truth[class_id][i][5] - \
-                        ground_truth[class_id][i][3]
-                height = ground_truth[class_id][i][6] - \
-                         ground_truth[class_id][i][4]
+                top = ground_truth[class_id][i][4]
+                right = ground_truth[class_id][i][5]
+                bottom = ground_truth[class_id][i][6]
 
                 object_dict.update({'visibility': visibility,
+                                    'truncation': int(ground_truth[class_id][i][0]),
+                                    'occlusion': float(ground_truth[class_id][i][1]),
                                     'bounding_box': {
-                                        'top_left': [left, bottom - height],
-                                        'bottom_right': [left + width,
-                                                         bottom]}})
+                                        'top_left': [left, top],
+                                        'bottom_right': [right, bottom]}})
 
                 if class_id != 'DontCare':
                     gt_object = ground_truth[class_id][i]
@@ -371,7 +378,11 @@ class KITTI3DToFATConverter:
                         [gt_object[10], gt_object[11], gt_object[12]])
 
                     rotation_y = gt_object[13]
-                    rotation = Rotation.from_euler("XYZ", [0, rotation_y, 0])
+
+                    axis = np.array([0, 1, 0])  # y-axis
+                    rotation_vector = axis * float(rotation_y)
+                    rotation = Rotation.from_rotvec(rotation_vector)
+                    #rotation = Rotation.from_euler("XYZ", [0, rotation_y, 0])
 
                     cuboid = self._compute_cuboid(location, dimensions,
                                                   rotation.as_matrix())
@@ -381,23 +392,38 @@ class KITTI3DToFATConverter:
                     if args.distance_in_cm:
                         cuboid *= 100
 
+                    projected_cuboid_dope = self._reorder_cuboid_points(
+                        cuboid_2D).T.tolist()
+                    centroid =  [np.average(cuboid_2D[0,]), np.average(cuboid_2D[1,])]
+                    projected_cuboid_centerpose = self._reorder_cuboid_for_centerpose(projected_cuboid_dope,centroid)
+
+                    cuboid_dope = cuboid.T.tolist()
                     location = [np.average(cuboid[0]), np.average(cuboid[1]),
-                                np.average(cuboid[2])]
+                                 np.average(cuboid[2])]
+                    cuboid_centerpose = self._reorder_cuboid_for_centerpose(cuboid_dope, location)
+
 
                     object_dict.update({
-                                           'projected_cuboid': self._reorder_cuboid_points(
-                                               cuboid_2D).T.tolist(),
-                                           'projected_cuboid_centroid': [
-                                               np.average(cuboid_2D[0,]),
-                                               np.average(cuboid_2D[1,])],
-                                           'cuboid': cuboid.T.tolist(),
+                                           'projected_cuboid': projected_cuboid_centerpose,
+                                           'keypoints_3d': cuboid_centerpose,
                                            'location': location,
-                                           'quaternion_xyzw': self._calculate_quaternion(
-                                               rotation)
+                                           'quaternion_xyzw': list(Rotation.as_quat(rotation)),
+                                           'scale': [dimensions[1], dimensions[0], dimensions[2]]
                                            })
                 objects.append(object_dict)
 
         return objects
+
+    def _reorder_cuboid_for_centerpose(self, fat_cuboid: list, centroid: list) -> list:
+        return [centroid,
+                fat_cuboid[7],
+                fat_cuboid[3],
+                fat_cuboid[4],
+                fat_cuboid[0],
+                fat_cuboid[6],
+                fat_cuboid[2],
+                fat_cuboid[5],
+                fat_cuboid[1]]
 
     def _calculate_quaternion(self, rotation: Rotation) -> list:
         """
@@ -447,6 +473,34 @@ class KITTI3DToFATConverter:
                          cuboid_FAT[6],
                          cuboid_FAT[7]]).T
 
+    def _convert_to_centerpose_camera_data(self, camera_info):
+        centerpose_camera_data = {}
+        pm = camera_info['projection_matrix']['data']
+        centerpose_camera_data.update({'width': camera_info['image_width'],
+                                       'height': camera_info['image_height'],
+                                       'location_world': [ 0, 0, 0],
+                                       'quaternion_xyzw_worldframe': [0, 0, 0, 1],
+                                       'intrinsics': {
+                                           'cx': camera_info['camera_matrix']['data'][2],
+                                           'cy': camera_info['camera_matrix']['data'][5],
+                                           'fx': camera_info['camera_matrix']['data'][0],
+                                           'fy': camera_info['camera_matrix']['data'][4]
+                                       },
+                                       'camera_projection_matrix': [
+                                        [pm[0],pm[1],pm[2],pm[3]],
+                                        [pm[4],pm[5],pm[6],pm[7]],
+                                        [pm[8],pm[9],pm[10],pm[11]],
+                                        [0, 0, 0, 1]
+                                       ],
+                                       'camera_view_matrix': [
+                                       [ 1, 0, 0, 0 ],
+                                       [ 0, 1, 0, 0 ],
+                                       [ 0, 0, 1, 0 ],
+                                       [ 0, 0, 0, 1 ]]
+
+                                       })
+        return centerpose_camera_data
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -464,7 +518,7 @@ if __name__ == '__main__':
                         metavar="DIR",
                         type=str)
     parser.add_argument('--distance-in-cm',
-                        default=True,
+                        default=False,
                         help='Distance unit for output dataset is centimeters.',
                         metavar="",
                         type=bool)
