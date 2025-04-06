@@ -38,7 +38,7 @@ def draw_bbox(image, bbox, color=(0, 255, 0), thickness=2):
     cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), color, thickness)
 
 def main(mode='3d'):
-    image_dir = '/home/lore_be/data/Kitti3D_FAT/kitti_centerpose_cars_only_truncate_occlusion_rotation_bbox/test'  # Current directory
+    image_dir = '/home/lore_be/data/deleteme2/'  # Current directory
     image_files = load_images_and_jsons(image_dir)
     current_idx = 0
 
@@ -90,4 +90,4 @@ def main(mode='3d'):
 
 if __name__ == '__main__':
     # You can change the mode here: '2d' or '3d'
-    main(mode='2d')
+    main(mode='3d')
